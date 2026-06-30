@@ -1,0 +1,3 @@
+node_modules/
+*.json.copy
+budgetapp-recovered-*.json
