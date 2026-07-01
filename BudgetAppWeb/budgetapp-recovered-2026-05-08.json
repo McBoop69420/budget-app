@@ -1,0 +1,192 @@
+{
+  "hasCompletedSetup": true,
+  "activeView": "dashboard",
+  "billView": "list",
+  "debtStrategy": "Avalanche",
+  "lastTipsPromptDate": "",
+  "lastTcgplayerPromptDate": "2026-05-07",
+  "incomes": [
+    {
+      "id": "oux7e4jrcznmohh8fh3",
+      "name": "Handshake",
+      "amount": 500,
+      "frequency": "Weekly",
+      "tipsAmount": 196,
+      "isActive": true,
+      "includeTips": true
+    }
+  ],
+  "bills": [
+    {
+      "id": "b7bnbunjcwfmohhdbdw",
+      "name": "Mortgage",
+      "amount": 525,
+      "dueDay": 27,
+      "category": "Housing",
+      "isPaid": false,
+      "notes": "",
+      "isRecurring": true
+    },
+    {
+      "id": "d91efdvcidmmohhe6sz",
+      "name": "KU",
+      "amount": 108.12,
+      "dueDay": 14,
+      "category": "Utilities",
+      "isPaid": false,
+      "notes": "Amount for 5/14. On Autopay",
+      "isRecurring": true
+    },
+    {
+      "id": "3hvdspo9oicmohhf1gf",
+      "name": "Claude",
+      "amount": 21.2,
+      "dueDay": 15,
+      "category": "Subscription",
+      "notes": "Paid out of BCS Account",
+      "isPaid": false,
+      "isRecurring": true
+    },
+    {
+      "id": "7dw15bsy3z6mohhfutr",
+      "name": "Internet",
+      "amount": 50,
+      "dueDay": 18,
+      "category": "Utilities",
+      "isPaid": false,
+      "notes": "Paid out of BCS Account. On Autopay",
+      "isRecurring": true
+    },
+    {
+      "id": "4lsjjy9rzr5mohhgh3l",
+      "name": "Student Loan",
+      "amount": 0,
+      "dueDay": 1,
+      "category": "Other",
+      "isPaid": true,
+      "notes": "Need to look into this",
+      "isRecurring": true
+    },
+    {
+      "id": "ntew1xqh5timohhhbvr",
+      "name": "Car Insurance",
+      "amount": 109.86,
+      "dueDay": 5,
+      "category": "Insurance",
+      "isPaid": true,
+      "notes": "",
+      "isRecurring": true
+    },
+    {
+      "id": "a29mp4l1j2imohhi4i4",
+      "name": "Cell Phone",
+      "amount": 176.68,
+      "dueDay": 5,
+      "category": "Utilities",
+      "isPaid": true,
+      "notes": "Amount for 4/5. Paid out of BCS Account. On Autopay",
+      "isRecurring": true
+    },
+    {
+      "id": "kn5g6kez3zmohhipnn",
+      "name": "ChatGPT",
+      "amount": 21.2,
+      "dueDay": 6,
+      "category": "Subscription",
+      "isPaid": true,
+      "notes": "Paid out of BCS Account. On Autopay",
+      "isRecurring": true
+    },
+    {
+      "id": "fn07i9cpl58mohhj7gt",
+      "name": "HOA",
+      "amount": 550,
+      "dueDay": 10,
+      "category": "Housing",
+      "isPaid": false,
+      "notes": "Need to look into this again to get numbers right\n",
+      "isRecurring": true
+    }
+  ],
+  "debts": [
+    {
+      "id": "utujxe9blamohhn5mu",
+      "name": "Apple Card",
+      "balance": 1680,
+      "originalBalance": 1680,
+      "interestRate": 0,
+      "minimumPayment": 50,
+      "dueDay": 28,
+      "type": "Credit Card",
+      "promoExpirationDate": "",
+      "accruedInterest": 0,
+      "notes": "",
+      "hasPromotion": false,
+      "isPaid": false
+    },
+    {
+      "id": "cbm7fb26ty9mohho78o",
+      "name": "CCU Card",
+      "balance": 2884.19,
+      "originalBalance": 2884.19,
+      "interestRate": 0,
+      "minimumPayment": 100,
+      "dueDay": 21,
+      "type": "Credit Card",
+      "promoExpirationDate": "",
+      "accruedInterest": 0,
+      "notes": "",
+      "hasPromotion": false,
+      "isPaid": false
+    },
+    {
+      "id": "j97wwhrepdmohhotbb",
+      "name": "Discover",
+      "balance": 1905.88,
+      "originalBalance": 0,
+      "interestRate": 0,
+      "minimumPayment": 200,
+      "dueDay": 12,
+      "type": "Credit Card",
+      "promoExpirationDate": "",
+      "accruedInterest": 0,
+      "notes": "",
+      "hasPromotion": false,
+      "isPaid": false
+    },
+    {
+      "id": "cw7agxryq5mohixiv0",
+      "name": "HELOC",
+      "balance": 19829.45,
+      "originalBalance": 19829.45,
+      "interestRate": 0,
+      "minimumPayment": 200,
+      "dueDay": 10,
+      "type": "Credit Card",
+      "promoExpirationDate": "",
+      "accruedInterest": 0,
+      "notes": "",
+      "hasPromotion": false,
+      "isPaid": false
+    }
+  ],
+  "transactions": [],
+  "goals": [],
+  "weeklyTips": [
+    {
+      "id": "38qa6yjh1c8mowzwpcg",
+      "weekStartDate": "2026-05-08",
+      "amount": 196,
+      "isEntered": true,
+      "enteredDate": "2026-05-08"
+    }
+  ],
+  "tcgplayerIncome": [
+    {
+      "id": "5dvji4ntm2vmohjff6s",
+      "date": "2026-04-27",
+      "amount": 0,
+      "note": "\"Tips\" only"
+    }
+  ]
+}
