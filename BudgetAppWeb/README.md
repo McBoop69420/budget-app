@@ -10,7 +10,7 @@ Double-click `BudgetApp.cmd`, or run:
 npm.cmd start
 ```
 
-Data is saved in Electron/browser `localStorage`.
+Data is saved in Electron/browser `localStorage`. When running in Electron, every change is also backed up automatically to JSON files (a `budgetapp-latest.json` plus one dated file per day, keeping the last 30 days) in the app's user-data folder — open it with the "Backups" button in Settings.
 
 ## Account Screenshot Import
 
@@ -46,3 +46,6 @@ Expected JSON:
 - Account tracking with balance snapshots, stale balance flags, and debt-account linking
 - Savings goals, including a storefront goal
 - Local import/export/reset controls
+- Automatic on-change file backups (Electron) with a 30-day daily history
+- Light and dark themes (toggle in Settings)
+- Window size and position remembered between launches

@@ -3,8 +3,10 @@
   --bg: #f5f6f8;
   --panel: #ffffff;
   --panel-2: #eef2f5;
+  --sidebar: #fbfcfd;
   --text: #1d232b;
   --muted: #687381;
+  --note: #3e4956;
   --line: #dce2e8;
   --green: #1f8f55;
   --green-soft: #dff4e8;
@@ -12,11 +14,36 @@
   --red-soft: #fae4e4;
   --blue: #2d6cdf;
   --blue-soft: #e3ecff;
+  --blue-strong: #184ba4;
   --orange: #b86b13;
   --orange-soft: #fff0da;
   --purple: #6c54d9;
   --purple-soft: #ebe7ff;
   --shadow: 0 10px 30px rgba(35, 45, 60, 0.08);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #12161c;
+  --panel: #1b222b;
+  --panel-2: #242d38;
+  --sidebar: #161c23;
+  --text: #e8ecf1;
+  --muted: #94a0ae;
+  --note: #b8c2cd;
+  --line: #2c3642;
+  --green: #4cc98a;
+  --green-soft: #143526;
+  --red: #e26b6b;
+  --red-soft: #3a1d1d;
+  --blue: #5b8ef2;
+  --blue-soft: #1c2c4a;
+  --blue-strong: #9db9f5;
+  --orange: #e0a35a;
+  --orange-soft: #3a2c15;
+  --purple: #a291ec;
+  --purple-soft: #2a2447;
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
 
 * {
@@ -52,10 +79,12 @@ button {
 .sidebar {
   position: sticky;
   top: 0;
+  display: flex;
+  flex-direction: column;
   height: 100vh;
   padding: 18px 14px;
   border-right: 1px solid var(--line);
-  background: #fbfcfd;
+  background: var(--sidebar);
 }
 
 .brand {
@@ -74,7 +103,7 @@ button {
   height: 34px;
   border-radius: 8px;
   background: var(--text);
-  color: white;
+  color: var(--bg);
 }
 
 .nav {
@@ -97,8 +126,27 @@ button {
 
 .nav button.active {
   background: var(--blue-soft);
-  color: #184ba4;
+  color: var(--blue-strong);
   font-weight: 700;
+}
+
+.help-btn {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: auto;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  text-align: left;
+}
+
+.help-btn:hover {
+  color: var(--text);
 }
 
 .main {
@@ -215,6 +263,7 @@ button {
   font-size: 28px;
   font-weight: 800;
   line-height: 1.1;
+  overflow-wrap: anywhere;
 }
 
 .submetric {
@@ -265,7 +314,7 @@ button {
 .row-note {
   max-width: 72ch;
   margin-top: 6px;
-  color: #3e4956;
+  color: var(--note);
   font-size: 13px;
   line-height: 1.35;
   white-space: normal;
@@ -375,7 +424,7 @@ textarea {
   min-height: 38px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: white;
+  background: var(--panel);
   color: var(--text);
   padding: 8px 10px;
 }
@@ -400,7 +449,7 @@ textarea {
   max-height: min(780px, calc(100vh - 40px));
   overflow: auto;
   border-radius: 8px;
-  background: white;
+  background: var(--panel);
   box-shadow: 0 30px 90px rgba(0, 0, 0, 0.22);
 }
 
@@ -427,6 +476,75 @@ textarea {
 
 .modal-body {
   padding: 16px;
+}
+
+.tour-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 29;
+  background: rgba(14, 22, 32, 0.35);
+  pointer-events: none;
+}
+
+.tour-overlay {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 30;
+  width: min(360px, calc(100vw - 48px));
+}
+
+.tour-card {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+}
+
+.tour-card h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.tour-card p {
+  margin: 0;
+  color: var(--note);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.tour-dots {
+  display: flex;
+  gap: 6px;
+  margin: 14px 0;
+}
+
+.tour-dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.tour-dots span.active {
+  background: var(--blue);
+}
+
+.tour-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+@media (max-width: 880px) {
+  .tour-overlay {
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    width: auto;
+  }
 }
 
 .progress {
@@ -461,7 +579,7 @@ textarea {
 
 .tabs button.active {
   background: var(--text);
-  color: white;
+  color: var(--bg);
 }
 
 .calendar {
@@ -476,7 +594,12 @@ textarea {
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: white;
+  background: var(--panel);
+}
+
+.day.today {
+  border-color: var(--blue);
+  background: var(--blue-soft);
 }
 
 .day strong {
@@ -491,6 +614,32 @@ textarea {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.chart {
+  display: block;
+  width: 100%;
+  height: 160px;
+}
+
+.chart-line {
+  fill: none;
+  stroke: var(--blue);
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.chart-dot {
+  fill: var(--panel);
+  stroke: var(--blue);
+  stroke-width: 2;
+}
+
+.chart-zero {
+  stroke: var(--line);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
 }
 
 .positive {

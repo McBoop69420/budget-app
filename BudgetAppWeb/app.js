@@ -17,6 +17,7 @@ const navItems = [
   ["income", "Income", "+"],
   ["bills", "Bills", "D"],
   ["spending", "Spending", "-"],
+  ["history", "History", "H"],
   ["goals", "Goals", "*"],
   ["debt", "Debt", "%"],
   ["settings", "Settings", "="]
@@ -24,9 +25,12 @@ const navItems = [
 
 const seedState = {
   hasCompletedSetup: false,
+  hasSeenWalkthrough: false,
   activeView: "dashboard",
   billView: "list",
+  theme: "light",
   debtStrategy: "Avalanche",
+  debtExtraPayment: 0,
   lastTipsPromptDate: "",
   lastTcgplayerPromptDate: "",
   incomes: [],
@@ -38,25 +42,80 @@ const seedState = {
   tcgplayerIncome: [],
   accounts: [],
   balanceSnapshots: [],
+  monthlyHistory: [],
   lastAccountImport: null
 };
+
+const walkthroughSteps = [
+  { view: "dashboard", title: "Welcome to BudgetApp", body: "This is your Monthly Dashboard, the home base for the month. It shows income, obligations, flex budget, savings rate, and runway at a glance, plus a 90-day cash flow forecast so you can see what's coming before it hits your account." },
+  { view: "networth", title: "Net Worth", body: "See total assets minus liabilities and debt, track how fresh your account balances are, and view a balance trend plus a forward-looking net worth projection." },
+  { view: "accounts", title: "Accounts", body: "Add or import checking, savings, credit card, and loan balances. Liability accounts can link to a debt record so both stay in sync automatically." },
+  { view: "income", title: "Income", body: "Add paychecks on a weekly, bi-weekly, or monthly schedule, plus optional tips and TCGplayer income. BudgetApp will prompt you to enter those on the days you'd expect them." },
+  { view: "bills", title: "Bills", body: "Track recurring bills by due date in List or Calendar view. Click a status pill to cycle it between Unpaid, Pending, and Cleared." },
+  { view: "spending", title: "Spending", body: "Log discretionary spending here. Your Flex Budget is what's left after income minus bills and debt minimums, and this page tracks how much of it you've used this month." },
+  { view: "history", title: "History", body: "Every time you use \"Start New Month\" on the Dashboard, a snapshot of that month's income, bills, spending, and savings rate is saved here." },
+  { view: "goals", title: "Goals", body: "Set savings goals with a target amount and date, including one featured Storefront goal. BudgetApp tells you if you're on pace based on your available monthly savings." },
+  { view: "debt", title: "Debt Tracker", body: "Compare Avalanche (highest interest first) vs. Snowball (smallest balance first) payoff order, and use the Payoff Planner to see how an extra monthly payment changes your debt-free date." },
+  { view: "settings", title: "Settings", body: "Export or import your data as JSON, switch light/dark mode, or reset everything. Everything stays local to your device, nothing is sent anywhere." },
+  { view: "dashboard", title: "That's the tour", body: "Click Help in the sidebar anytime to run through this again." }
+];
 
 let state = loadState();
 let modal = null;
 let hasCheckedLaunchPrompts = false;
+let lastRenderedView = null;
+let shouldFocusModal = false;
+let tourStep = null;
+
+function startTour() {
+  tourStep = 0;
+  setState({ activeView: walkthroughSteps[0].view });
+}
+
+function tourNext() {
+  if (tourStep + 1 >= walkthroughSteps.length) {
+    finishTour();
+    return;
+  }
+  tourStep += 1;
+  setState({ activeView: walkthroughSteps[tourStep].view });
+}
+
+function tourPrev() {
+  if (tourStep <= 0) return;
+  tourStep -= 1;
+  setState({ activeView: walkthroughSteps[tourStep].view });
+}
+
+function finishTour() {
+  // Reaching the end (as opposed to skipping) is what marks the walkthrough as seen,
+  // so a skip leaves hasSeenWalkthrough false and the tour auto-launches again next run.
+  tourStep = null;
+  setState({ hasSeenWalkthrough: true });
+}
+
+function closeTour() {
+  tourStep = null;
+  render();
+}
 
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
+function toIsoDate(date) {
+  // Local calendar date; toISOString() is UTC and rolls to the wrong day in the evening.
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
 function isoToday() {
-  return new Date().toISOString().slice(0, 10);
+  return toIsoDate(new Date());
 }
 
 function addMonthsIso(months) {
   const date = new Date();
   date.setMonth(date.getMonth() + months);
-  return date.toISOString().slice(0, 10);
+  return toIsoDate(date);
 }
 
 function loadState() {
@@ -66,6 +125,7 @@ function loadState() {
     const loaded = { ...structuredClone(seedState), ...JSON.parse(raw) };
     loaded.accounts = (loaded.accounts || []).map(normalizeAccountRecord);
     loaded.balanceSnapshots = loaded.balanceSnapshots || [];
+    loaded.monthlyHistory = loaded.monthlyHistory || [];
     loaded.debts = (loaded.debts || []).map((debt) => ({ ...debt, balance: Number(debt.balance || 0) }));
     if (!loaded.hasCompletedSetup && hasOnlyOriginalSampleData(loaded)) {
       return structuredClone(seedState);
@@ -89,8 +149,19 @@ function hasOnlyOriginalSampleData(loaded) {
     && loaded.transactions[0].note === "Groceries";
 }
 
+let backupTimer = null;
+
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  scheduleBackup();
+}
+
+function scheduleBackup() {
+  if (!window.budgetBridge) return;
+  clearTimeout(backupTimer);
+  backupTimer = setTimeout(() => {
+    window.budgetBridge.saveBackup(JSON.stringify(state, null, 2)).catch(() => {});
+  }, 1500);
 }
 
 function setState(patch) {
@@ -151,7 +222,8 @@ function trackedDebtTotal() {
 }
 
 function accountAssetsTotal() {
-  return state.accounts.filter((item) => !isLiabilityAccount(item)).reduce((sum, item) => sum + Math.max(Number(item.balance || 0), 0), 0);
+  // Sum actual balances (don't floor negatives to 0) so an overdrawn account still drags the total down.
+  return state.accounts.filter((item) => !isLiabilityAccount(item)).reduce((sum, item) => sum + Number(item.balance || 0), 0);
 }
 
 function unlinkedAccountLiabilitiesTotal() {
@@ -165,7 +237,7 @@ function accountLiabilitiesTotal() {
 }
 
 function cashOnHandTotal() {
-  return state.accounts.filter(isLiquidAccount).reduce((sum, item) => sum + Math.max(Number(item.balance || 0), 0), 0);
+  return state.accounts.filter(isLiquidAccount).reduce((sum, item) => sum + Number(item.balance || 0), 0);
 }
 
 function goalSavingsTotal() {
@@ -182,6 +254,25 @@ function netWorthTotal() {
 
 function staleAccountCount() {
   return state.accounts.filter(isAccountStale).length;
+}
+
+function accountBalanceTimeline() {
+  // Carries each account's last-known balance forward across snapshot dates so we get a running
+  // total per date, not just the balance of whichever account happened to be updated that day.
+  const snapshots = [...(state.balanceSnapshots || [])].sort((a, b) => new Date(a.date) - new Date(b.date));
+  if (!snapshots.length) return [];
+  const dates = [...new Set(snapshots.map((item) => item.date))].sort();
+  const latestByAccount = {};
+  return dates.map((date) => {
+    snapshots.filter((item) => item.date === date).forEach((item) => {
+      latestByAccount[item.accountId] = item;
+    });
+    const net = Object.values(latestByAccount).reduce((sum, item) => {
+      const isLiability = ["Credit Card", "Loan"].includes(item.accountType);
+      return sum + (isLiability ? -Math.abs(Number(item.balance || 0)) : Number(item.balance || 0));
+    }, 0);
+    return { date, net };
+  });
 }
 
 function findDebtForAccount(account) {
@@ -284,8 +375,9 @@ function importAccountFile() {
 }
 
 function frequencyMultiplier(frequency) {
-  if (frequency === "Weekly") return 4;
-  if (frequency === "Bi-Weekly") return 2;
+  // Average months have 52/12 weeks, not 4 — using 4 understates monthly income by ~8%.
+  if (frequency === "Weekly") return 52 / 12;
+  if (frequency === "Bi-Weekly") return 26 / 12;
   return 1;
 }
 
@@ -377,13 +469,12 @@ function unpaidObligationsTotal() {
   return monthlyObligationItems().filter((item) => !item.isPaid).reduce((sum, item) => sum + item.amount, 0);
 }
 
-function monthStart() {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), 1);
-}
-
 function isThisMonth(dateValue) {
-  return new Date(dateValue) >= monthStart();
+  // Parse date-only strings as local time; "YYYY-MM-DD" alone parses as UTC
+  // and shifts to the previous day in western timezones.
+  const date = new Date(`${String(dateValue).slice(0, 10)}T00:00:00`);
+  const now = new Date();
+  return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
 }
 
 function thisMonthTransactions() {
@@ -414,6 +505,32 @@ function remainingFlex() {
   return flexBudget() - spentThisMonth();
 }
 
+function currentMonthKey(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function formatMonthLabel(monthKey) {
+  const [year, month] = monthKey.split("-").map(Number);
+  return new Date(year, month - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+}
+
+function buildMonthSnapshot() {
+  const income = totalMonthlyIncome();
+  const billsAndDebt = totalMonthlyBills() + totalDebtPayments();
+  const spent = spentThisMonth();
+  const remaining = income - billsAndDebt - spent;
+  return {
+    id: uid(),
+    month: currentMonthKey(),
+    recordedDate: isoToday(),
+    income,
+    billsAndDebt,
+    spent,
+    remainingFlex: remaining,
+    savingsRate: income > 0 ? remaining / income : 0
+  };
+}
+
 function remainingDailyBudget() {
   const today = new Date();
   const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
@@ -421,13 +538,66 @@ function remainingDailyBudget() {
   return remainingDays > 0 ? remainingFlex() / remainingDays : 0;
 }
 
+function currentSavingsRate() {
+  const income = totalMonthlyIncome();
+  return income > 0 ? remainingFlex() / income : 0;
+}
+
+function averageFlexSpending() {
+  const rows = (state.monthlyHistory || []).slice(-3);
+  return rows.length ? rows.reduce((sum, item) => sum + item.spent, 0) / rows.length : spentThisMonth();
+}
+
+function runwayMonths() {
+  const monthlyBurn = totalMonthlyBills() + totalDebtPayments() + averageFlexSpending();
+  return monthlyBurn > 0 ? cashOnHandTotal() / monthlyBurn : Infinity;
+}
+
+function cashFlowForecast(horizonDays = 90) {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const startMonthKey = currentMonthKey(start);
+  const dailyVariableIncome = state.incomes
+    .filter((item) => item.isActive && item.frequency !== "Monthly")
+    .reduce((sum, item) => sum + monthlyIncome(item) / 30, 0);
+  const monthlyIncomes = state.incomes.filter((item) => item.isActive && item.frequency === "Monthly");
+  const allObligations = monthlyObligationItems();
+  // The in-progress month only owes what's still unpaid; every later month is assumed to recur in
+  // full, since "Start New Month" resets paid status back to Unpaid for the next cycle.
+  const currentCycleObligations = allObligations.filter((item) => !item.isPaid);
+
+  let runningBalance = cashOnHandTotal();
+  const days = [];
+  for (let offset = 0; offset < horizonDays; offset++) {
+    const date = new Date(start.getFullYear(), start.getMonth(), start.getDate() + offset);
+    const daysInThisMonth = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+    const isStartingCycle = currentMonthKey(date) === startMonthKey;
+    const obligationsForDay = isStartingCycle ? currentCycleObligations : allObligations;
+
+    let inflow = dailyVariableIncome;
+    monthlyIncomes.forEach((item) => {
+      if (clampDueDay(item.payDay || 1, daysInThisMonth) === date.getDate()) inflow += Number(item.amount || 0);
+    });
+    let outflow = 0;
+    obligationsForDay.forEach((item) => {
+      if (clampDueDay(item.dueDay, daysInThisMonth) === date.getDate()) outflow += Number(item.amount || 0);
+    });
+
+    runningBalance += inflow - outflow;
+    days.push({ date: toIsoDate(date), balance: runningBalance, inflow, outflow });
+  }
+  return days;
+}
+
 function nextDueDate(dueDay) {
   const today = new Date();
   const year = today.getFullYear();
   const month = today.getMonth();
   const day = Math.min(Math.max(Number(dueDay || 1), 1), 31);
-  let due = new Date(year, month, day);
-  if (today.getDate() > day) due = new Date(year, month + 1, day);
+  // Clamp to the last day of the month so due day 31 lands on Jun 30, not Jul 1.
+  const dueInMonth = (m) => new Date(year, m, Math.min(day, new Date(year, m + 1, 0).getDate()));
+  let due = dueInMonth(month);
+  if (today.getDate() > due.getDate()) due = dueInMonth(month + 1);
   return due;
 }
 
@@ -437,6 +607,21 @@ function daysUntilDue(dueDay) {
   const due = nextDueDate(dueDay);
   due.setHours(0, 0, 0, 0);
   return Math.round((due - start) / 86400000);
+}
+
+function daysUntilDate(dateValue) {
+  // Parse as local date, matching the isThisMonth/toIsoDate convention elsewhere in this file.
+  const target = new Date(`${String(dateValue).slice(0, 10)}T00:00:00`);
+  const today = new Date(`${isoToday()}T00:00:00`);
+  return Math.round((target - today) / 86400000);
+}
+
+function expiringPromotions(daysThreshold) {
+  return state.debts
+    .filter((debt) => debt.hasPromotion && debt.promoExpirationDate && Number(debt.balance || 0) > 0)
+    .map((debt) => ({ ...debt, daysUntilExpiration: daysUntilDate(debt.promoExpirationDate) }))
+    .filter((debt) => debt.daysUntilExpiration <= daysThreshold)
+    .sort((a, b) => a.daysUntilExpiration - b.daysUntilExpiration);
 }
 
 function debtMonthlyInterest(debt) {
@@ -473,15 +658,101 @@ function totalInterest(debt, payment = debt.minimumPayment) {
   return interestPaid;
 }
 
+function sortedDebtsByStrategy() {
+  return [...state.debts].sort((a, b) => state.debtStrategy === "Avalanche" ? Number(b.interestRate) - Number(a.interestRate) : Number(a.balance) - Number(b.balance));
+}
+
+function simulateDebtPayoff(debts, extraPayment) {
+  // Cascades one combined pool of "minimum payments + extra" across debts in the given order:
+  // once a debt hits zero, its minimum payment joins the pool for the next debt in line.
+  const working = debts.filter((debt) => Number(debt.balance || 0) > 0).map((debt) => ({
+    id: debt.id,
+    balance: Number(debt.balance || 0),
+    monthlyRate: Number(debt.interestRate || 0) / 100 / 12,
+    minPayment: Number(debt.minimumPayment || 0)
+  }));
+  if (!working.length) return { months: 0, totalInterest: 0, payoffMonth: {}, interestByMonth: [] };
+
+  let snowball = Number(extraPayment || 0);
+  let months = 0;
+  let totalInterestPaid = 0;
+  const payoffMonth = {};
+  const interestByMonth = [];
+
+  while (working.some((debt) => debt.balance > 0) && months < 600) {
+    months += 1;
+    let monthInterest = 0;
+    const targetIndex = working.findIndex((debt) => debt.balance > 0);
+    working.forEach((debt, index) => {
+      if (debt.balance <= 0) return;
+      const interest = debt.balance * debt.monthlyRate;
+      monthInterest += interest;
+      totalInterestPaid += interest;
+      debt.balance += interest;
+      const payment = Math.min(debt.balance, debt.minPayment + (index === targetIndex ? snowball : 0));
+      debt.balance -= payment;
+      if (debt.balance <= 0.005) {
+        debt.balance = 0;
+        payoffMonth[debt.id] = months;
+        snowball += debt.minPayment;
+      }
+    });
+    interestByMonth.push(monthInterest);
+  }
+  return { months, totalInterest: totalInterestPaid, payoffMonth, interestByMonth };
+}
+
+function availableMonthlySavings() {
+  // What's left after bills, debt minimums, typical discretionary spending, and any planned extra
+  // debt payment — the pool that would otherwise just sit as cash, available to project forward.
+  return Math.max(flexBudget() - averageFlexSpending() - Number(state.debtExtraPayment || 0), 0);
+}
+
+function netWorthProjectionHorizonMonths() {
+  const goalMonths = state.goals.map((goal) => goalStats(goal).monthsRemaining);
+  return Math.min(60, Math.max(24, ...goalMonths, 1));
+}
+
+function netWorthProjection() {
+  const horizonMonths = netWorthProjectionHorizonMonths();
+  const debts = sortedDebtsByStrategy().filter((debt) => Number(debt.balance || 0) > 0);
+  const simulation = simulateDebtPayoff(debts, Number(state.debtExtraPayment || 0));
+  const income = totalMonthlyIncome();
+  const bills = totalMonthlyBills();
+  const spending = averageFlexSpending();
+  const today = new Date();
+
+  // Debt principal payments are net-worth-neutral (cash moves to reduce a liability 1:1) —
+  // only interest actually costs anything, so it's the sole debt-related term below.
+  let netWorth = netWorthTotal();
+  const points = [];
+  for (let month = 1; month <= horizonMonths; month++) {
+    const interest = simulation.interestByMonth[month - 1] || 0;
+    netWorth += income - bills - spending - interest;
+    const date = new Date(today.getFullYear(), today.getMonth() + month, 1);
+    points.push({ month, date: toIsoDate(date), netWorth });
+  }
+  return points;
+}
+
+function goalProjection(goal) {
+  const stats = goalStats(goal);
+  const pace = availableMonthlySavings();
+  const monthsToReach = pace > 0 ? Math.ceil(stats.remaining / pace) : Infinity;
+  return { monthsToReach, aheadMonths: stats.monthsRemaining - monthsToReach };
+}
+
 function goalStats(goal) {
   const target = Number(goal.targetAmount || 0);
   const current = Number(goal.currentAmount || 0);
   const progress = target > 0 ? Math.min(current / target, 1) : 0;
   const remaining = Math.max(target - current, 0);
   const today = new Date();
-  const targetDate = new Date(goal.targetDate);
+  // Parse as local dates — new Date("YYYY-MM-DD") parses as UTC and can roll to the wrong month
+  // in timezones behind UTC, same pitfall noted for isThisMonth() elsewhere in this file.
+  const targetDate = new Date(`${String(goal.targetDate).slice(0, 10)}T00:00:00`);
   const monthsRemaining = Math.max((targetDate.getFullYear() - today.getFullYear()) * 12 + targetDate.getMonth() - today.getMonth(), 1);
-  const created = new Date(goal.createdDate || isoToday());
+  const created = new Date(`${String(goal.createdDate || isoToday()).slice(0, 10)}T00:00:00`);
   const totalMonths = Math.max((targetDate.getFullYear() - created.getFullYear()) * 12 + targetDate.getMonth() - created.getMonth(), 1);
   const elapsedMonths = Math.max((today.getFullYear() - created.getFullYear()) * 12 + today.getMonth() - created.getMonth(), 0);
   const expected = elapsedMonths / totalMonths;
@@ -504,7 +775,7 @@ function currentWeekStart() {
   const result = new Date(today);
   result.setDate(today.getDate() - daysFromFriday);
   result.setHours(0, 0, 0, 0);
-  return result.toISOString().slice(0, 10);
+  return toIsoDate(result);
 }
 
 function isThursday() {
@@ -554,8 +825,13 @@ function render() {
       state.lastTcgplayerPromptDate = isoToday();
       saveState();
     }
+    if (state.hasCompletedSetup && !state.hasSeenWalkthrough) {
+      tourStep = 0;
+    }
   }
 
+  document.documentElement.dataset.theme = state.theme === "dark" ? "dark" : "light";
+  const previousScrollY = window.scrollY;
   const app = document.getElementById("app");
   app.innerHTML = `
     <div class="app">
@@ -564,12 +840,20 @@ function render() {
         <nav class="nav">
           ${navItems.map(([id, label, icon]) => `<button class="${state.activeView === id ? "active" : ""}" data-view="${id}"><span>${icon}</span><span>${label}</span></button>`).join("")}
         </nav>
+        ${state.hasCompletedSetup ? `<button class="help-btn" type="button" data-action="start-tour"><span>?</span><span>Help</span></button>` : ""}
       </aside>
       <main class="main">${renderView()}</main>
       ${modal ? renderModal() : ""}
+      ${renderTour()}
     </div>
   `;
   bindEvents();
+  window.scrollTo(0, lastRenderedView === state.activeView ? previousScrollY : 0);
+  lastRenderedView = state.activeView;
+  if (shouldFocusModal && modal) {
+    shouldFocusModal = false;
+    document.querySelector(".modal-body input, .modal-body select, .modal-body textarea")?.focus();
+  }
 }
 
 function page(title, subtitle, actions, body) {
@@ -589,6 +873,7 @@ function renderView() {
   if (state.activeView === "income") return renderIncome();
   if (state.activeView === "bills") return renderBills();
   if (state.activeView === "spending") return renderSpending();
+  if (state.activeView === "history") return renderHistory();
   if (state.activeView === "goals") return renderGoals();
   if (state.activeView === "debt") return renderDebt();
   if (state.activeView === "settings") return renderSettings();
@@ -597,6 +882,31 @@ function renderView() {
 
 function metric(label, value, className = "") {
   return `<section class="card metric"><div class="label">${label}</div><div class="value ${className}">${value}</div></section>`;
+}
+
+function svgLineChart(points) {
+  if (points.length < 2) return "";
+  const width = 640;
+  const height = 160;
+  const padding = 14;
+  const values = points.map((point) => point.value);
+  const min = Math.min(...values, 0);
+  const max = Math.max(...values, 0);
+  const range = max - min || 1;
+  const stepX = (width - padding * 2) / (points.length - 1);
+  const coords = points.map((point, index) => ({
+    x: padding + stepX * index,
+    y: height - padding - ((point.value - min) / range) * (height - padding * 2),
+    ...point
+  }));
+  const path = coords.map((c, index) => `${index === 0 ? "M" : "L"}${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(" ");
+  const zeroY = height - padding - ((0 - min) / range) * (height - padding * 2);
+  const dots = coords.map((c) => `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="3.5" class="chart-dot"><title>${escapeHtml(c.label)}: ${escapeHtml(money(c.value))}</title></circle>`).join("");
+  return `<svg class="chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
+    <line x1="${padding}" y1="${zeroY.toFixed(1)}" x2="${width - padding}" y2="${zeroY.toFixed(1)}" class="chart-zero" />
+    <path d="${path}" class="chart-line" />
+    ${dots}
+  </svg>`;
 }
 
 function renderDashboard() {
@@ -623,13 +933,18 @@ function renderDashboard() {
       <p style="margin:0;color:var(--muted)">Add this week's tips so income projections stay current.</p>
     </section>` : "";
 
+  const promoBanner = renderPromoWarnings(30);
   return page("Monthly Dashboard", new Date().toLocaleDateString(), `<button class="btn" data-action="new-month">Start New Month</button>`, `
-    <div class="grid metrics">
+    <div class="grid metrics wide-metrics">
       ${metric("Monthly Income", money(totalMonthlyIncome()), "positive")}
       ${metric("Monthly Obligations", money(totalMonthlyBills() + totalDebtPayments()), "negative")}
       ${metric("Flex Budget", money(flexBudget()), flexBudget() >= 0 ? "positive" : "negative")}
+      ${metric("Savings Rate", `${Math.round(currentSavingsRate() * 100)}%`, currentSavingsRate() >= 0.2 ? "positive" : currentSavingsRate() >= 0 ? "warning" : "negative")}
+      ${metric("Runway", Number.isFinite(runwayMonths()) ? `${runwayMonths().toFixed(1)} mo` : "—", !Number.isFinite(runwayMonths()) || runwayMonths() >= 3 ? "positive" : "warning")}
     </div>
     <div style="height:14px"></div>
+    ${promoBanner}
+    <div style="height:${promoBanner ? 14 : 0}px"></div>
     ${tipsCard}
     <div style="height:${tipsCard ? 14 : 0}px"></div>
     ${tcgplayerCard}
@@ -650,6 +965,8 @@ function renderDashboard() {
         <div class="list">${upcoming.length ? upcoming.map(renderUpcomingRow).join("") : `<div class="empty">Nothing due soon.</div>`}</div>
       </section>
     </div>
+    <div style="height:14px"></div>
+    ${renderCashFlowForecast()}
     <div style="height:14px"></div>
     <section class="card">
       <div class="section-head"><h2>Monthly Bills Progress</h2><button class="btn" data-view="bills">Open Bills</button></div>
@@ -675,6 +992,38 @@ function renderDashboard() {
   `);
 }
 
+function renderCashFlowForecast() {
+  const horizonDays = 90;
+  const days = cashFlowForecast(horizonDays);
+  if (!days.length) return "";
+  const lowestPoint = days.reduce((min, item) => item.balance < min.balance ? item : min, days[0]);
+  const firstNegative = days.find((item) => item.balance < 0);
+  const eventDays = days.filter((item) => item.inflow > 0 || item.outflow > 0);
+  const visibleEvents = eventDays.slice(0, 20);
+  const points = days.map((item) => ({ label: formatDate(item.date), value: item.balance }));
+  return `<section class="card pad">
+    <div class="section-head" style="padding:0 0 12px;border-bottom:0">
+      <h2>Cash Flow Forecast</h2>
+      <span class="${firstNegative ? "negative" : "positive"}">${firstNegative ? `Dips negative on ${formatDate(firstNegative.date)}` : `Stays positive over the next ${horizonDays} days`}</span>
+    </div>
+    <div class="grid metrics">
+      ${metric("Starting Cash", money(cashOnHandTotal()))}
+      ${metric("Lowest Projected", money(lowestPoint.balance), lowestPoint.balance >= 0 ? "positive" : "negative")}
+      ${metric("Lowest On", formatDate(lowestPoint.date))}
+    </div>
+    <div style="height:14px"></div>
+    ${svgLineChart(points)}
+    <div style="height:10px"></div>
+    <div class="list">${visibleEvents.length ? visibleEvents.map((item) => `
+      <div class="row">
+        <div class="row-main"><div class="row-title">${formatDate(item.date)}</div><div class="row-sub">${[item.inflow > 0 ? `+${money(item.inflow)} income` : "", item.outflow > 0 ? `-${money(item.outflow)} due` : ""].filter(Boolean).join(" · ")}</div></div>
+        <div class="row-value ${item.balance >= 0 ? "" : "negative"}">${money(item.balance)}</div>
+      </div>`).join("") : `<div class="empty">No projected income or bills over the next ${horizonDays} days.</div>`}</div>
+    ${eventDays.length > visibleEvents.length ? `<p style="margin:10px 0 0;color:var(--muted);font-size:13px">+${eventDays.length - visibleEvents.length} more projected events beyond this list.</p>` : ""}
+    <p style="margin:10px 0 0;color:var(--muted);font-size:13px">Projects known bill/debt due dates and paychecks ${horizonDays} days out, assuming bills recur monthly and this cycle's paid/unpaid status only applies to the current month. Day-to-day discretionary spending isn't included.</p>
+  </section>`;
+}
+
 function renderRemainingObligationRow(item) {
   const days = daysUntilDue(item.dueDay);
   const pillClass = days <= 2 ? "red" : days <= 7 ? "orange" : item.isDebt ? "purple" : "";
@@ -698,7 +1047,7 @@ function renderCategoryRows() {
     grouped[item.category] = (grouped[item.category] || 0) + Number(item.amount || 0);
   });
   const rows = Object.entries(grouped).sort((a, b) => b[1] - a[1]);
-  return rows.length ? rows.map(([name, value]) => `<div class="row"><div class="row-title">${name}</div><div class="row-value">${money(value)}</div></div>`).join("") : `<div class="empty">No spending logged this month.</div>`;
+  return rows.length ? rows.map(([name, value]) => `<div class="row"><div class="row-title">${escapeHtml(name)}</div><div class="row-value">${money(value)}</div></div>`).join("") : `<div class="empty">No spending logged this month.</div>`;
 }
 
 function renderNetWorth() {
@@ -738,7 +1087,55 @@ function renderNetWorth() {
         <div class="list">${recentAccounts.length ? recentAccounts.map(renderAccountRow).join("") : `<div class="empty">Import or add accounts to build your net worth dashboard.</div>`}</div>
       </section>
     </div>
+    <div style="height:14px"></div>
+    ${renderNetWorthTrendSection()}
+    <div style="height:14px"></div>
+    ${renderNetWorthProjectionSection()}
   `);
+}
+
+function renderNetWorthTrendSection() {
+  const timeline = accountBalanceTimeline();
+  if (timeline.length < 2) {
+    return `<section class="card pad">
+      <div class="section-head" style="padding:0 0 12px;border-bottom:0"><h2>Account Balance Trend</h2></div>
+      <div class="empty">Add or update accounts on at least two different dates to see a trend.</div>
+    </section>`;
+  }
+  const points = timeline.slice(-24).map((item) => ({ label: formatDate(item.date), value: item.net }));
+  const first = points[0];
+  const last = points[points.length - 1];
+  const change = last.value - first.value;
+  return `<section class="card pad">
+    <div class="section-head" style="padding:0 0 12px;border-bottom:0">
+      <h2>Account Balance Trend</h2>
+      <span class="${change >= 0 ? "positive" : "negative"}">${change >= 0 ? "+" : ""}${money(change)} since ${escapeHtml(first.label)}</span>
+    </div>
+    ${svgLineChart(points)}
+    <div class="submetric" style="margin-top:8px"><span>${escapeHtml(first.label)}</span><span>${escapeHtml(last.label)}</span></div>
+    ${trackedDebtTotal() > 0 ? `<p style="margin:10px 0 0;color:var(--muted);font-size:13px">Reflects tracked account balances only — excludes ${money(trackedDebtTotal())} of debt-tracker balances not linked to an account.</p>` : ""}
+  </section>`;
+}
+
+function renderNetWorthProjectionSection() {
+  const points = netWorthProjection();
+  if (!points.length) return "";
+  const startingNetWorth = netWorthTotal();
+  const oneYear = points.find((item) => item.month === 12) || points[points.length - 1];
+  const horizonPoint = points[points.length - 1];
+  const monthlyGrowth = (horizonPoint.netWorth - startingNetWorth) / points.length;
+  const chartPoints = points.map((item) => ({ label: formatMonthLabel(item.date.slice(0, 7)), value: item.netWorth }));
+  return `<section class="card pad">
+    <div class="section-head" style="padding:0 0 12px;border-bottom:0"><h2>Net Worth Projection</h2></div>
+    <div class="grid metrics">
+      ${metric("In 12 Months", money(oneYear.netWorth), oneYear.netWorth >= startingNetWorth ? "positive" : "negative")}
+      ${metric(`In ${points.length} Months`, money(horizonPoint.netWorth), horizonPoint.netWorth >= startingNetWorth ? "positive" : "negative")}
+      ${metric("Avg Monthly Growth", money(monthlyGrowth), monthlyGrowth >= 0 ? "positive" : "negative")}
+    </div>
+    <div style="height:14px"></div>
+    ${svgLineChart(chartPoints)}
+    <p style="margin:10px 0 0;color:var(--muted);font-size:13px">Projects income minus bills, average discretionary spending, and debt interest forward, assuming your current Payoff Planner extra payment and spending habits stay the same.</p>
+  </section>`;
 }
 
 function renderAccounts() {
@@ -785,8 +1182,16 @@ function renderPendingTransactionRows() {
   return rows.length ? rows.map((item) => `<div class="row"><div class="row-main"><div class="row-title">${escapeHtml(item.note || item.category)}</div><div class="row-sub">${formatDate(item.date)}${item.accountFlag ? ` · ${escapeHtml(item.accountFlag)}` : ""}</div></div><div><div class="row-value warning">${money(item.amount)}</div><button class="pill status-toggle orange" title="Mark cleared" data-action="cycle-transaction-status" data-id="${item.id}">Pending</button></div></div>`).join("") : `<div class="empty">No pending transactions.</div>`;
 }
 
+function goalPaceLabel(projection) {
+  if (!Number.isFinite(projection.monthsToReach)) return { text: "No available savings", className: "warning" };
+  if (projection.aheadMonths > 0) return { text: `${projection.aheadMonths} mo ahead of pace`, className: "positive" };
+  if (projection.aheadMonths < 0) return { text: `${Math.abs(projection.aheadMonths)} mo behind pace`, className: "negative" };
+  return { text: "On pace", className: "positive" };
+}
+
 function renderGoalSummary(goal) {
   const stats = goalStats(goal);
+  const pace = goalPaceLabel(goalProjection(goal));
   return `
     <div class="submetric"><span>${escapeHtml(goal.name)}</span><strong class="${stats.isOnTrack ? "positive" : "warning"}">${stats.status}</strong></div>
     <div style="height:12px"></div>
@@ -797,6 +1202,8 @@ function renderGoalSummary(goal) {
       ${metric("Remaining", money(stats.remaining), "warning")}
       ${metric("Monthly Needed", money(stats.monthlyNeeded))}
     </div>
+    <div style="height:10px"></div>
+    <div class="submetric"><span>At your available savings pace</span><strong class="${pace.className}">${pace.text}</strong></div>
   `;
 }
 
@@ -837,7 +1244,7 @@ function renderTcgplayerRow(item) {
 function renderIncomeSection(title, rows) {
   return `<section class="card"><div class="section-head"><h2>${title}</h2><span class="pill">${rows.length}</span></div><div class="list">${rows.length ? rows.map((item) => `
     <div class="row">
-      <div class="row-main"><div class="row-title">${escapeHtml(item.name)}</div><div class="row-sub">${item.frequency}${item.includeTips ? " · includes tips" : ""}</div></div>
+      <div class="row-main"><div class="row-title">${escapeHtml(item.name)}</div><div class="row-sub">${escapeHtml(item.frequency)}${item.includeTips ? " · includes tips" : ""}</div></div>
       <div><div class="row-value">${money(monthlyIncome(item))}/mo</div><div class="row-actions"><button class="btn icon" title="Toggle active" data-action="toggle-income" data-id="${item.id}">✓</button><button class="btn icon" title="Edit" data-modal="income" data-id="${item.id}">✎</button><button class="btn icon danger" title="Delete" data-delete="incomes" data-id="${item.id}">×</button></div></div>
     </div>`).join("") : `<div class="empty">No income sources yet.</div>`}</div></section>`;
 }
@@ -884,12 +1291,18 @@ function paymentStatusPillClass(status) {
   return "red";
 }
 
+function clampDueDay(dueDay, daysInMonth) {
+  return Math.min(Math.max(Number(dueDay || 1), 1), daysInMonth);
+}
+
 function renderBillsCalendar(items) {
-  const daysInMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
+  const today = new Date();
+  const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
   return `<section class="card"><div class="calendar">${Array.from({ length: daysInMonth }, (_, index) => {
     const day = index + 1;
-    const dayItems = items.filter((item) => Number(item.dueDay) === day);
-    return `<div class="day"><strong>${day}</strong>${dayItems.map((item) => `<div class="item">${escapeHtml(item.name)} ${money(item.amount)}</div>`).join("")}</div>`;
+    // Clamp so a due day of 31 still shows up on the last day of a shorter month, instead of vanishing.
+    const dayItems = items.filter((item) => clampDueDay(item.dueDay, daysInMonth) === day);
+    return `<div class="day ${day === today.getDate() ? "today" : ""}"><strong>${day}</strong>${dayItems.map((item) => `<div class="item">${escapeHtml(item.name)} ${money(item.amount)}</div>`).join("")}</div>`;
   }).join("")}</div></section>`;
 }
 
@@ -912,7 +1325,7 @@ function renderSpending() {
     <div class="grid two">
       <section class="card"><div class="section-head"><h2>Transactions</h2><span class="pill">${thisMonthTransactions().length}</span></div><div class="list">
         ${Object.keys(grouped).length ? Object.entries(grouped).map(([date, rows]) => `<div class="section-head"><h2>${formatDate(date)}</h2></div>${rows.map((item) => `
-          <div class="row"><div class="row-main"><div class="row-title">${escapeHtml(item.note || item.category)}<button class="pill status-toggle ${paymentStatusPillClass(transactionStatus(item))}" title="Cycle transaction status" data-action="cycle-transaction-status" data-id="${item.id}">${transactionStatus(item)}</button></div><div class="row-sub">${item.category}${item.accountFlag ? ` · ${escapeHtml(item.accountFlag)}` : ""}</div></div><div><div class="row-value">${money(item.amount)}</div><div class="row-actions"><button class="btn icon" title="Edit" data-modal="transaction" data-id="${item.id}">✎</button><button class="btn icon danger" title="Delete" data-delete="transactions" data-id="${item.id}">×</button></div></div></div>`).join("")}`).join("") : `<div class="empty">No transactions this month.</div>`}
+          <div class="row"><div class="row-main"><div class="row-title">${escapeHtml(item.note || item.category)}<button class="pill status-toggle ${paymentStatusPillClass(transactionStatus(item))}" title="Cycle transaction status" data-action="cycle-transaction-status" data-id="${item.id}">${transactionStatus(item)}</button></div><div class="row-sub">${escapeHtml(item.category)}${item.accountFlag ? ` · ${escapeHtml(item.accountFlag)}` : ""}</div></div><div><div class="row-value">${money(item.amount)}</div><div class="row-actions"><button class="btn icon" title="Edit" data-modal="transaction" data-id="${item.id}">✎</button><button class="btn icon danger" title="Delete" data-delete="transactions" data-id="${item.id}">×</button></div></div></div>`).join("")}`).join("") : `<div class="empty">No transactions this month.</div>`}
       </div></section>
       <div class="stack">
         <section class="card"><div class="section-head"><h2>Pending Transactions</h2><span class="pill orange">${money(pendingSpend)}</span></div><div class="list">${renderPendingTransactionRows()}</div></section>
@@ -920,6 +1333,34 @@ function renderSpending() {
       </div>
     </div>
   `);
+}
+
+function renderHistory() {
+  const rows = [...(state.monthlyHistory || [])].sort((a, b) => b.month.localeCompare(a.month));
+  const avgRate = rows.length ? rows.reduce((sum, item) => sum + item.savingsRate, 0) / rows.length : 0;
+  return page("History", "Monthly snapshots captured each time you start a new month.", "", `
+    <div class="grid metrics">
+      ${metric("Months Tracked", String(rows.length))}
+      ${metric("Avg Savings Rate", rows.length ? `${Math.round(avgRate * 100)}%` : "—")}
+      ${metric("Latest Month", rows.length ? formatMonthLabel(rows[0].month) : "—")}
+    </div>
+    <div style="height:14px"></div>
+    <section class="card">
+      <div class="section-head"><h2>Monthly Snapshots</h2><span class="pill">${rows.length}</span></div>
+      <div class="list">${rows.length ? rows.map(renderHistoryRow).join("") : `<div class="empty">Use "Start New Month" on the dashboard to begin building history.</div>`}</div>
+    </section>
+  `);
+}
+
+function renderHistoryRow(item) {
+  const pillClass = item.savingsRate >= 0.2 ? "green" : item.savingsRate >= 0 ? "orange" : "red";
+  return `<div class="row">
+    <div class="row-main">
+      <div class="row-title">${escapeHtml(formatMonthLabel(item.month))}</div>
+      <div class="row-sub">Income ${money(item.income)} · Bills+Debt ${money(item.billsAndDebt)} · Spent ${money(item.spent)}</div>
+    </div>
+    <div><div class="row-value ${item.remainingFlex >= 0 ? "positive" : "negative"}">${money(item.remainingFlex)}</div><span class="pill ${pillClass}">${Math.round(item.savingsRate * 100)}% saved</span></div>
+  </div>`;
 }
 
 function formatDate(date) {
@@ -932,10 +1373,43 @@ function formatDate(date) {
   return item.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
 }
 
+function renderPromoWarnings(daysThreshold) {
+  const promos = expiringPromotions(daysThreshold);
+  if (!promos.length) return "";
+  return `<section class="card pad">
+    <div class="section-head" style="padding:0 0 12px;border-bottom:0"><h2>Promo Balances Expiring</h2></div>
+    <div class="list">${promos.map((debt) => `
+      <div class="row">
+        <div class="row-main"><div class="row-title">${escapeHtml(debt.name)}</div><div class="row-sub">${money(debt.balance)} balance${debt.accruedInterest ? ` · ${money(debt.accruedInterest)} deferred interest at risk` : ""}</div></div>
+        <span class="pill ${debt.daysUntilExpiration <= 30 ? "red" : "orange"}">${debt.daysUntilExpiration <= 0 ? "Expired" : `${debt.daysUntilExpiration} days`}</span>
+      </div>`).join("")}</div>
+  </section>`;
+}
+
+function renderDebtPayoffPlanner() {
+  const debts = sortedDebtsByStrategy().filter((debt) => Number(debt.balance || 0) > 0);
+  if (!debts.length) return "";
+  const extra = Number(state.debtExtraPayment || 0);
+  const baseline = simulateDebtPayoff(debts, 0);
+  const withExtra = simulateDebtPayoff(debts, extra);
+  const monthsSaved = baseline.months - withExtra.months;
+  const interestSaved = baseline.totalInterest - withExtra.totalInterest;
+  return `<section class="card pad">
+    <div class="section-head" style="padding:0 0 12px;border-bottom:0"><h2>Payoff Planner</h2></div>
+    <div class="field" style="max-width:220px"><label for="extra-payment">Extra Monthly Payment</label><input id="extra-payment" type="number" min="0" step="10" value="${extra}"></div>
+    <div style="height:14px"></div>
+    <div class="grid metrics">
+      ${metric("Debt-Free In", withExtra.months >= 600 ? "600+ months" : `${withExtra.months} months`, "positive")}
+      ${metric("Total Interest", money(withExtra.totalInterest), "warning")}
+      ${metric(extra > 0 ? "Extra Payment Saves" : "Add Extra To See Savings", extra > 0 ? `${monthsSaved} mo · ${money(interestSaved)}` : "—", extra > 0 ? "positive" : "")}
+    </div>
+  </section>`;
+}
+
 function renderDebt() {
   const totalDebt = state.debts.reduce((sum, item) => sum + Number(item.balance || 0), 0);
   const totalInterestMonthly = state.debts.reduce((sum, item) => sum + debtMonthlyInterest(item), 0);
-  const sorted = [...state.debts].sort((a, b) => state.debtStrategy === "Avalanche" ? Number(b.interestRate) - Number(a.interestRate) : Number(a.balance) - Number(b.balance));
+  const sorted = sortedDebtsByStrategy();
   return page("Debt Tracker", "Compare payoff order and track promotional balances.", `
     <div class="tabs">${["Avalanche", "Snowball"].map((item) => `<button class="${state.debtStrategy === item ? "active" : ""}" data-strategy="${item}">${item}</button>`).join("")}</div>
     <button class="btn primary" data-modal="debt">+ Add Debt</button>`, `
@@ -945,11 +1419,15 @@ function renderDebt() {
       ${metric("Monthly Interest", money(totalInterestMonthly), "warning")}
     </div>
     <div style="height:14px"></div>
+    ${renderPromoWarnings(90)}
+    <div style="height:${expiringPromotions(90).length ? 14 : 0}px"></div>
+    ${renderDebtPayoffPlanner()}
+    <div style="height:14px"></div>
     <div class="grid two">
       <section class="card"><div class="section-head"><h2>Accounts</h2><span class="pill">${state.debts.length}</span></div><div class="list">
         ${state.debts.length ? state.debts.map((item) => {
           const progress = Number(item.originalBalance || item.balance) > 0 ? Math.max(0, Math.min(1, 1 - Number(item.balance) / Number(item.originalBalance || item.balance))) : 1;
-          return `<div class="row"><div class="row-main"><div class="row-title">${escapeHtml(item.name)}</div><div class="row-sub">${item.type} · ${number(item.interestRate)}% APR · due day ${item.dueDay}</div><div class="progress" style="margin-top:8px"><span style="width:${progress * 100}%"></span></div></div><div><div class="row-value">${money(item.balance)}</div><div class="row-actions"><button class="btn icon" title="Edit" data-modal="debt" data-id="${item.id}">✎</button><button class="btn icon danger" title="Delete" data-delete="debts" data-id="${item.id}">×</button></div></div></div>`;
+          return `<div class="row"><div class="row-main"><div class="row-title">${escapeHtml(item.name)}</div><div class="row-sub">${escapeHtml(item.type)} · ${number(item.interestRate)}% APR · due day ${item.dueDay}</div><div class="progress" style="margin-top:8px"><span style="width:${progress * 100}%"></span></div></div><div><div class="row-value">${money(item.balance)}</div><div class="row-actions"><button class="btn icon" title="Edit" data-modal="debt" data-id="${item.id}">✎</button><button class="btn icon danger" title="Delete" data-delete="debts" data-id="${item.id}">×</button></div></div></div>`;
         }).join("") : `<div class="empty">No debt tracked.</div>`}
       </div></section>
       <section class="card"><div class="section-head"><h2>Payoff Order</h2><span class="pill purple">${state.debtStrategy}</span></div><div class="list">
@@ -978,14 +1456,17 @@ function renderGoalCard(goal) {
 
 function renderGoalRow(goal) {
   const stats = goalStats(goal);
-  return `<div class="row"><div class="row-main"><div class="row-title">${escapeHtml(goal.name)}</div><div class="row-sub">${Math.round(stats.progress * 100)}% · ${stats.status} · target ${goal.targetDate}</div><div class="progress" style="margin-top:8px"><span style="width:${stats.progress * 100}%"></span></div></div><div><div class="row-value">${money(goal.currentAmount)} / ${money(goal.targetAmount)}</div><div class="row-actions"><button class="btn icon" title="Edit" data-modal="goal" data-id="${goal.id}">✎</button><button class="btn icon danger" title="Delete" data-delete="goals" data-id="${goal.id}">×</button></div></div></div>`;
+  const pace = goalPaceLabel(goalProjection(goal));
+  return `<div class="row"><div class="row-main"><div class="row-title">${escapeHtml(goal.name)}</div><div class="row-sub">${Math.round(stats.progress * 100)}% · ${stats.status} · target ${escapeHtml(goal.targetDate)} · <span class="${pace.className}">${pace.text}</span></div><div class="progress" style="margin-top:8px"><span style="width:${stats.progress * 100}%"></span></div></div><div><div class="row-value">${money(goal.currentAmount)} / ${money(goal.targetAmount)}</div><div class="row-actions"><button class="btn icon" title="Edit" data-modal="goal" data-id="${goal.id}">✎</button><button class="btn icon danger" title="Delete" data-delete="goals" data-id="${goal.id}">×</button></div></div></div>`;
 }
 
 function renderSettings() {
   return page("Settings", "Local data and app controls.", `
+    <button class="btn" data-action="toggle-theme">${state.theme === "dark" ? "Light Mode" : "Dark Mode"}</button>
     <button class="btn" data-action="export">Export</button>
     <button class="btn" data-action="import">Import</button>
     <button class="btn" data-action="import-accounts">Import Accounts</button>
+    ${window.budgetBridge ? `<button class="btn" data-action="open-backups">Backups</button>` : ""}
     <button class="btn danger" data-action="reset">Reset</button>`, `
     <div class="grid metrics wide-metrics">
       ${metric("Income Sources", String(state.incomes.length))}
@@ -1002,7 +1483,7 @@ function renderSettings() {
         <div class="row"><div>Monthly Income</div><div class="row-value positive">${money(totalMonthlyIncome())}</div></div>
         <div class="row"><div>Monthly Bills</div><div class="row-value negative">${money(totalMonthlyBills() + totalDebtPayments())}</div></div>
         <div class="row"><div>Flex Budget</div><div class="row-value">${money(flexBudget())}</div></div>
-        <div class="row"><div>Storage</div><div class="row-value">Browser local</div></div>
+        <div class="row"><div>Storage</div><div class="row-value">${window.budgetBridge ? "Local + automatic file backups" : "Browser local"}</div></div>
       </div>
     </section>
   `);
@@ -1029,6 +1510,27 @@ function renderSetup() {
   `);
 }
 
+function renderTour() {
+  if (tourStep === null || modal) return "";
+  const step = walkthroughSteps[tourStep];
+  const isLast = tourStep === walkthroughSteps.length - 1;
+  return `<div class="tour-backdrop"></div>
+  <div class="tour-overlay">
+    <div class="tour-card">
+      <h2>${escapeHtml(step.title)}</h2>
+      <p>${escapeHtml(step.body)}</p>
+      <div class="tour-dots">${walkthroughSteps.map((_, index) => `<span class="${index === tourStep ? "active" : ""}"></span>`).join("")}</div>
+      <div class="tour-footer">
+        <button class="btn" type="button" data-action="tour-skip">${isLast ? "Close" : "Skip"}</button>
+        <div class="actions">
+          ${tourStep > 0 ? `<button class="btn" type="button" data-action="tour-prev">Back</button>` : ""}
+          <button class="btn primary" type="button" data-action="tour-next">${isLast ? "Done" : "Next"}</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
 function renderModal() {
   const title = modal.id ? `Edit ${modal.type}` : `Add ${modal.type}`;
   return `<div class="modal-backdrop"><form class="modal" data-form="${modal.type}">
@@ -1042,7 +1544,10 @@ function field(name, label, value = "", type = "text", options = null) {
   if (options) {
     return `<div class="field"><label for="${name}">${label}</label><select id="${name}" name="${name}">${options.map((item) => `<option value="${escapeHtml(item)}" ${item === value ? "selected" : ""}>${escapeHtml(item)}</option>`).join("")}</select></div>`;
   }
-  return `<div class="field"><label for="${name}">${label}</label><input id="${name}" name="${name}" type="${type}" value="${escapeHtml(value)}" ${type === "number" ? "step=\"0.01\"" : ""}></div>`;
+  // step="any" still accepts cents when typed, but the wheel, arrow keys and spinner move by
+  // whole dollars (198.01 -> 199.01) instead of crawling a penny at a time.
+  const numberAttrs = name === "dueDay" || name === "payDay" ? `min="1" max="31" step="1"` : `step="any"`;
+  return `<div class="field"><label for="${name}">${label}</label><input id="${name}" name="${name}" type="${type}" value="${escapeHtml(value)}" ${type === "number" ? numberAttrs : ""}></div>`;
 }
 
 function checkbox(name, label, checked) {
@@ -1055,7 +1560,7 @@ function debtPicker(value = "") {
 
 function renderForm(type, item) {
   if (type === "account") return `<div class="form-grid">${field("name", "Name", item.name || "")}${field("type", "Type", item.type || "Checking", "text", categories.account)}${field("balance", "Current Balance", item.balance || "", "number")}${field("lastUpdated", "Last Updated", item.lastUpdated || isoToday(), "date")}${debtPicker(item.linkedDebtId || "")}<div class="field full"><label for="notes">Notes</label><textarea id="notes" name="notes">${escapeHtml(item.notes || "")}</textarea></div></div>`;
-  if (type === "income") return `<div class="form-grid">${field("name", "Name", item.name || "")}${field("amount", "Amount", item.amount || "", "number")}${field("frequency", "Frequency", item.frequency || "Bi-Weekly", "text", categories.incomeFrequency)}${checkbox("isActive", "Active", item.isActive !== false)}${checkbox("includeTips", "Track weekly tips", !!item.includeTips)}</div>`;
+  if (type === "income") return `<div class="form-grid">${field("name", "Name", item.name || "")}${field("amount", "Amount", item.amount || "", "number")}${field("frequency", "Frequency", item.frequency || "Bi-Weekly", "text", categories.incomeFrequency)}${field("payDay", "Pay Day (if Monthly)", item.payDay || 1, "number")}${checkbox("isActive", "Active", item.isActive !== false)}${checkbox("includeTips", "Track weekly tips", !!item.includeTips)}</div>`;
   if (type === "bill") return `<div class="form-grid">${field("name", "Name", item.name || "")}${field("amount", "Amount", item.amount || "", "number")}${field("dueDay", "Due Day", item.dueDay || 1, "number")}${field("category", "Category", item.category || "Other", "text", categories.bill)}${field("paymentStatus", "Payment Status", paymentStatus(item), "text", categories.paymentStatus)}<div class="field full"><label for="notes">Notes</label><textarea id="notes" name="notes">${escapeHtml(item.notes || "")}</textarea></div></div>`;
   if (type === "transaction") return `<div class="form-grid">${field("date", "Date", item.date || isoToday(), "date")}${field("amount", "Amount", item.amount || "", "number")}${field("category", "Category", item.category || "Misc", "text", categories.transaction)}${field("transactionStatus", "Status", transactionStatus(item), "text", categories.transactionStatus)}${field("accountFlag", "Account", item.accountFlag || "")}<div class="field full"><label for="note">Note</label><textarea id="note" name="note">${escapeHtml(item.note || "")}</textarea></div></div>`;
   if (type === "debt") return `<div class="form-grid">${field("name", "Name", item.name || "")}${field("balance", "Balance", item.balance || "", "number")}${field("originalBalance", "Original Balance", item.originalBalance || item.balance || "", "number")}${field("interestRate", "APR %", item.interestRate || "", "number")}${field("minimumPayment", "Minimum Payment", item.minimumPayment || "", "number")}${field("dueDay", "Due Day", item.dueDay || 1, "number")}${field("type", "Type", item.type || "Credit Card", "text", categories.debt)}${field("promoExpirationDate", "Promo Expiration", item.promoExpirationDate || "", "date")}${field("accruedInterest", "Accrued Interest", item.accruedInterest || 0, "number")}${checkbox("hasPromotion", "Promotional balance", !!item.hasPromotion)}<div class="field full"><label for="notes">Notes</label><textarea id="notes" name="notes">${escapeHtml(item.notes || "")}</textarea></div></div>`;
@@ -1073,12 +1578,24 @@ function bindEvents() {
   document.querySelectorAll("[data-delete]").forEach((button) => button.addEventListener("click", () => deleteItem(button.dataset.delete, button.dataset.id)));
   document.querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => handleAction(button.dataset.action, button.dataset.id)));
   document.querySelectorAll("form[data-form]").forEach((form) => form.addEventListener("submit", submitForm));
+  document.querySelector(".modal-backdrop")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) closeModal();
+  });
+  document.getElementById("extra-payment")?.addEventListener("change", (event) => {
+    setState({ debtExtraPayment: Math.max(0, Number(event.target.value || 0)) });
+  });
+}
+
+function closeModal() {
+  modal = null;
+  render();
 }
 
 function openModal(type, id = null, storefront = false) {
   const collection = collectionForType(type);
   const item = id && collection ? state[collection].find((entry) => entry.id === id) : null;
   modal = { type, id, item, storefront };
+  shouldFocusModal = true;
   render();
 }
 
@@ -1141,7 +1658,7 @@ function submitForm(event) {
 }
 
 function normalize(type, data) {
-  const numeric = ["amount", "dueDay", "balance", "originalBalance", "interestRate", "minimumPayment", "accruedInterest", "targetAmount", "currentAmount"];
+  const numeric = ["amount", "dueDay", "payDay", "balance", "originalBalance", "interestRate", "minimumPayment", "accruedInterest", "targetAmount", "currentAmount"];
   numeric.forEach((key) => {
     if (key in data) data[key] = Number(data[key] || 0);
   });
@@ -1191,18 +1708,45 @@ function nextTransactionStatusItem(item) {
 
 function handleAction(action, id) {
   if (action === "close-modal") modal = null;
-  if (action === "finish-setup") state.hasCompletedSetup = true;
+  if (action === "finish-setup") {
+    state.hasCompletedSetup = true;
+    if (!state.hasSeenWalkthrough) {
+      state.activeView = "dashboard";
+      tourStep = 0;
+    }
+  }
+  if (action === "start-tour") {
+    startTour();
+    return;
+  }
+  if (action === "tour-next") {
+    tourNext();
+    return;
+  }
+  if (action === "tour-prev") {
+    tourPrev();
+    return;
+  }
+  if (action === "tour-skip") {
+    closeTour();
+    return;
+  }
+  if (action === "toggle-theme") state.theme = state.theme === "dark" ? "light" : "dark";
+  if (action === "open-backups") {
+    window.budgetBridge?.openBackupFolder();
+    return;
+  }
   if (action === "toggle-income") state.incomes = state.incomes.map((item) => item.id === id ? { ...item, isActive: !item.isActive } : item);
   if (action === "toggle-bill" || action === "cycle-bill-status") state.bills = state.bills.map((item) => item.id === id ? nextPaymentStatusItem(item) : item);
   if (action === "toggle-debt" || action === "cycle-debt-status") state.debts = state.debts.map((item) => item.id === id ? nextPaymentStatusItem(item) : item);
   if (action === "cycle-transaction-status") state.transactions = state.transactions.map((item) => item.id === id ? nextTransactionStatusItem(item) : item);
-  if (action === "new-month" && confirm("Clear paid bill flags and this month's transactions?")) {
+  if (action === "new-month" && confirm("Start a new month? This resets bill and debt paid status and saves a snapshot to History. Transactions and tips are kept.")) {
+    state.monthlyHistory = (state.monthlyHistory || []).filter((item) => item.month !== currentMonthKey());
+    state.monthlyHistory.push(buildMonthSnapshot());
     state.bills = state.bills.map((item) => ({ ...item, paymentStatus: "Unpaid", isPaid: false }));
     state.debts = state.debts.map((item) => ({ ...item, paymentStatus: "Unpaid", isPaid: false }));
-    state.transactions = state.transactions.filter((item) => !isThisMonth(item.date));
-    state.weeklyTips = [];
   }
-  if (action === "reset" && confirm("Reset all local BudgetApp data?")) state = structuredClone(seedState);
+  if (action === "reset" && confirm("Reset all local BudgetApp data?")) state = { ...structuredClone(seedState), theme: state.theme };
   if (action === "import-accounts") {
     importAccountFile();
     return;
@@ -1212,11 +1756,12 @@ function handleAction(action, id) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "budgetapp-export.json";
+    link.download = `budgetapp-export-${isoToday()}.json`;
     link.click();
     URL.revokeObjectURL(url);
   }
   if (action === "import") {
+    if (!confirm("Importing a file replaces all current BudgetApp data. Continue?")) return;
     const input = document.createElement("input");
     input.type = "file";
     input.accept = "application/json";
@@ -1229,6 +1774,7 @@ function handleAction(action, id) {
           const loaded = { ...structuredClone(seedState), ...JSON.parse(reader.result) };
           loaded.accounts = (loaded.accounts || []).map(normalizeAccountRecord);
           loaded.balanceSnapshots = loaded.balanceSnapshots || [];
+          loaded.monthlyHistory = loaded.monthlyHistory || [];
           state = loaded;
           saveState();
           render();
@@ -1243,5 +1789,19 @@ function handleAction(action, id) {
   saveState();
   render();
 }
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && modal) closeModal();
+});
+
+window.addEventListener("beforeunload", () => {
+  // The debounced backup can still be pending when the window closes; flush it so the last
+  // edit before quitting isn't only in localStorage.
+  if (backupTimer) {
+    clearTimeout(backupTimer);
+    backupTimer = null;
+    window.budgetBridge?.saveBackup(JSON.stringify(state, null, 2)).catch(() => {});
+  }
+});
 
 render();
